@@ -37,4 +37,6 @@ jobs:
           committer: GitHub <noreply@github.com>
           author: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
           assignees: ${{ github.actor }}
+          branch: create-pull-request/patch-sync-submodule
+          delete-branch: true
           # reviewers: hpcaitech/pull-request-reviewer
