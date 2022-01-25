@@ -1,7 +1,8 @@
 name: Synchronize Submodule
-on: workflow_dispatch
-  # schedule:
-  #   - cron: "0 0 * * *"
+on: 
+  workflow_dispatch:
+  schedule:
+    - cron: "0 0 * * *"
 
 jobs:
   sync-submodule:
@@ -30,7 +31,6 @@ jobs:
           git commit -am "Automated submodule synchronization"
       
       - name: Create Pull Request
-        # if: steps.format.outputs.has-changes == 'true'
         uses: peter-evans/create-pull-request@v3
         with:
           title: '[Bot] Synchronize Submodule References'
@@ -39,5 +39,4 @@ jobs:
           committer: GitHub <noreply@github.com>
           author: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
           assignees: ${{ github.actor }}
-          # reviewers: hpcaitech/pull-request-reviewer
           delete-branch: true
