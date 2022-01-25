@@ -6,6 +6,7 @@ on: workflow_dispatch
 jobs:
   sync-submodule:
     runs-on: ubuntu-latest
+    if: github.repository == 'FrankLeeeee/ColossalAI'
     steps:
       - name: Checkout
         uses: actions/checkout@v2
