@@ -47,12 +47,19 @@ class ShardFormer:
         """
         Initialize the distributed process group according to the
         """
+<<<<<<< HEAD
         # create process group manager and 1d process group
         # TODO: may need to support other parallel mode when the config has such as field
         pg_manager = ProcessGroupManager()
         pg_manager.create_process_group(name='tp1d', ranks=range(self.coordinator.world_size))
         self.pg_manager = pg_manager
 
+=======
+        pg_manager = ProcessGroupManager()
+        if (self.shard_config.tensor_parallel_mode == '1d'):
+            pg_manager.create_process_group(name='tp1d', ranks=range(self.coordinator.world_size))
+        self.pg_manager = pg_manager
+>>>>>>> [shardformer] Refactor shardformer api (#4001)
         return pg_manager
 
     def shard_model(self, model: nn.Module, policy: Policy = None):
