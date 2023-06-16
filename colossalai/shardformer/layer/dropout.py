@@ -4,7 +4,11 @@ import torch
 import torch.nn as nn
 from torch.distributed import ProcessGroup
 
+<<<<<<< HEAD
 from .parallel_module import ParallelModule
+=======
+from .layers import ParallelModule
+>>>>>>> [shardformer] refactored embedding and dropout to parallel module (#4013)
 from .utils import create_randomizer_with_offset
 
 __all__ = ['Dropout1D']

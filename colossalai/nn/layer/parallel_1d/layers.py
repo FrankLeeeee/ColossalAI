@@ -768,6 +768,8 @@ class Embedding1D(ParallelLayer):
                  embedding_dim: int,
                  padding_idx: int = None,
                  dtype: torch.dtype = None,
+                 device: torch.device = None,
+                 process_group: ProcessGroup = None,
                  weight_initializer: Callable = init.normal_(),
                  *args,
                  **kwargs):
@@ -775,63 +777,78 @@ class Embedding1D(ParallelLayer):
 
         self.num_embeddings = num_embeddings
         self.embed_dim = embedding_dim
-        embed_dim_per_partition = divide(embedding_dim, gpc.tensor_parallel_size)
+        self.process_group = process_group
+        self.num_partitions = dist.get_world_size(process_group)
+        self.embed_dim_per_partition = divide(embedding_dim, self.num_partitions)
 
         self.padding_idx = padding_idx
         self.embed_args = args
         self.embed_kwargs = kwargs
 
-        self.weight = Parameter(
-            torch.empty((num_embeddings, embed_dim_per_partition), device=get_current_device(), dtype=dtype))
+        if device is None:
+            device = get_current_device()
 
-        self.reset_parameters(weight_initializer)
-        self._set_tensor_parallel_attributes()
-        set_parallel_input(False)
+        self.weight = Parameter(torch.empty((num_embeddings, self.embed_dim_per_partition), device=device, dtype=dtype))
 
-    def _set_tensor_parallel_attributes(self):
-        set_tensor_parallel_attribute_by_partition(self.weight, gpc.tensor_parallel_size)
+        # offset the seed with randomizer index and rank
+        seed = torch.random.initial_seed()
+        self.randomizer = create_randomizer_with_offset(seed, process_group=self.process_group)
+
+        with self.randomizer.fork_rng(enable_cpu=True):
+            self.reset_parameters(weight_initializer)
+
+    @staticmethod
+    def from_native_module(module: nn.Embedding,
+                           process_group: Union[ProcessGroup, List[ProcessGroup]] = None) -> "Embedding1D":
+        r"""
+        Build a 1D parallelized Embedding from a native nn.Embedding module.
+        """
+        # get the attributes
+        num_embedding = module.num_embeddings
+        embedding_dim = module.embedding_dim
+        padding_idx = module.padding_idx
+        max_norm = module.max_norm
+        norm_type = module.norm_type
+        scale_grad_by_freq = module.scale_grad_by_freq
+        sparse = module.sparse
+        dtype = module.weight.dtype
+        device = module.weight.device
+
+        # sparse is not support yet
+        if sparse:
+            raise NotImplementedError("The Embedding1D module does not support sparse embedding yet.")
+
+        embedding = Embedding1D(num_embeddings=num_embedding,
+                                embedding_dim=embedding_dim,
+                                padding_idx=padding_idx,
+                                process_group=process_group,
+                                dtype=dtype,
+                                device=device,
+                                max_norm=max_norm,
+                                norm_type=norm_type,
+                                scale_grad_by_freq=scale_grad_by_freq,
+                                sparse=sparse)
+
+        # copy the weight
+        with torch.no_grad():
+            sharded_weight = shard_colwise(module.weight.data, process_group)
+            embedding.weight.copy_(sharded_weight)
+
+        return embedding
 
     def reset_parameters(self, weight_initializer) -> None:
-        with seed(ParallelMode.TENSOR):
-            fan_in, fan_out = self.num_embeddings, self.embed_dim
-            weight_initializer(self.weight, fan_in=fan_in, fan_out=fan_out)
-            self._fill_padding_idx_with_zero()
+        fan_in, fan_out = self.num_embeddings, self.embed_dim
+        weight_initializer(self.weight, fan_in=fan_in, fan_out=fan_out)
+        self._fill_padding_idx_with_zero()
 
     def _fill_padding_idx_with_zero(self) -> None:
         if self.padding_idx is not None:
             with torch.no_grad():
                 self.weight[self.padding_idx].fill_(0)
 
-    def _load_from_global_state_dict(self, state_dict, prefix, *args):
-        local_state = OrderedDict()
-        weight_key = prefix + 'weight'
-        if gpc.get_local_rank(ParallelMode.TENSOR) == 0:
-            # weight
-            weight = state_dict.pop(weight_key, None)
-            if weight is not None:
-                local_state[weight_key] = weight
-
-        local_state = partition_tensor_parallel_state_dict(local_state,
-                                                           ParallelMode.PARALLEL_1D,
-                                                           dims={weight_key: -1},
-                                                           partition_states={weight_key: True})
-        super()._load_from_global_state_dict(local_state, prefix, *args)
-
-    def _save_to_global_state_dict(self, destination, prefix, keep_vars):
-        weight_key = prefix + 'weight'
-        local_state = OrderedDict({weight_key: self.weight})
-        local_state = gather_tensor_parallel_state_dict(local_state,
-                                                        ParallelMode.PARALLEL_1D,
-                                                        dims={weight_key: -1},
-                                                        partition_states={weight_key: True},
-                                                        keep_vars=keep_vars)
-        destination.update(local_state)
-
     def forward(self, input_: Tensor) -> Tensor:
-
         output_parallel = F.embedding(input_, self.weight, self.padding_idx, *self.embed_args, **self.embed_kwargs)
-
-        output = gather_forward_split_backward(output_parallel, ParallelMode.PARALLEL_1D, dim=-1)
+        output = gather_forward_split_backward(output_parallel, dim=-1, process_group=self.process_group)
 
         return output
 
