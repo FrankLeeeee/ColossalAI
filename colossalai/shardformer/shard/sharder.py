@@ -7,6 +7,10 @@ from colossalai.cluster.process_group_manager import ProcessGroupManager
 from .._utils import getattr_, setattr_
 from ..policies.autopolicy import get_autopolicy
 from ..policies.basepolicy import Policy, SubModuleReplacementDescription
+<<<<<<< HEAD
+=======
+from ..utils.utils import getattr_, setattr_
+>>>>>>> integrate with dist layer (#4011)
 from .shard_config import ShardConfig
 
 __all__ = ['ModelSharder', 'shard_model']
@@ -89,7 +93,11 @@ class ModelSharder(object):
         Args:
             model (:class:`torch.nn.Module`): The model to shard
         """
+<<<<<<< HEAD
         module_descriptions = self.policy.module_policy()
+=======
+        module_descriptions = self.policy.module_policy(self.shard_config)
+>>>>>>> integrate with dist layer (#4011)
         for module_description in module_descriptions.items():
             origin_layer_cls = module_description[0]
             attr_replacement = module_description[1].attribute_replacement
