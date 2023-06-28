@@ -28,7 +28,7 @@
 The sample API usage is given below:
 
 ``` python
-from colossalai.shardformer import ShardConfig, Shard
+from colossalai.shardformer import ShardConfig, ShardFormer
 from transformers import BertForMaskedLM
 
 # launch colossalai
@@ -39,12 +39,9 @@ config = BertConfig.from_pretrained('bert-base-uncased')
 model = BertForMaskedLM.from_pretrained('bert-base-uncased', config=config)
 
 # create huggingface model as normal
-shard_config = ShardConfig(tensor_parallel_size=2,
-                           data_parallel_size=1,
-                           gather_output=True)
+shard_config = ShardConfig()
 shard_former = ShardFormer(shard_config=shard_config)
-shard_former.init_distributed()
-sharded_model = shard_former.shard_model(model).to('cuda')
+sharded_model = shard_former.shard_model(model)
 
 # do everything like normal
 ...
@@ -146,16 +143,17 @@ class ParallelModule(torch.nn.Module):
 ```python
 @dataclass
 class ShardConfig:
-    data_parallel_size: int
-    tensor_parallel_size: int
+    tensor_parallel_process_group: ProcessGroup = None
+    fused_layernorm: bool = False
+    enable_all_optimization: bool = False
     ...
 
     # Some possible future config fields
-    pipeline_parallel_size: int # Support pipeline parallelism
+    pipeline_parallel_process_group: ProcessGroup # Support pipeline parallelism
     tensor_parallel_mode: Choice['1d', '2d', '2.5d', '3d'] # support different tensor parallel mode
     inference_only: bool # only inject inference-suitable sharding policy
-    gather_output: bool # gather the model output
     use_flash_attention: bool # whether to use flash attention to speed up attention
+
 ```
 
 ### Policy
@@ -182,11 +180,14 @@ class ModulePolicyDescription:
                             weight = module.weight
                             new_weight = shard_rowwise(weight, process_group)
                             module.weight = torch.nn.Parameter(new_weight)
+        method_replacement (Dict[str, Callable]): the key is the method name, the value is the function to replace the method and bind to the target object.
         sub_module_replacement: each element in the list is a ParamReplacementDescription object which specifies the module to be replaced and the target module used to replacement
     """
-    attribute_replacement: Dict[str, Any]
-    param_replacement: List[Callable]
-    sub_module_replacement: List[SubModuleReplacementDescription]
+    attribute_replacement: Dict[str, Any] = None
+    param_replacement: List[Callable] = None
+    method_replacement: Dict[str, Callable] = None
+    sub_module_replacement: List[SubModuleReplacementDescription] = None
+
 
 @dataclass
 class SubModuleReplacementDescription:
@@ -205,14 +206,28 @@ class SubModuleReplacementDescription:
 
 class Policy(ABC):
 
-    def __init__(self)
+    def __init__(self) -> None:
+        self.shard_config = None
         self.model = None
+        self.shard_config = None
 
     def set_model(self, model: nn.Module) -> None:
-        """
+        r"""
         Set model as an attribute of the Policy object so that we can access the model's attributes.
+
+        Args:
+            model (:class:`nn.Module`): The model to be perform
         """
         self.model = model
+
+    def set_shard_config(self, shard_config: ShardConfig) -> None:
+        r"""
+        Set shard config as an attribute of the Policy object.
+
+        Args:
+            shard_config (:class:`ShardConfig`): The shard config to be perform
+        """
+        self.shard_config = shard_config
 
     @abstractmethod
     def preprocess(self) -> nn.Module:
@@ -301,26 +316,13 @@ class ShardFormer:
         1. Create a colossalai.cluster.process_group_manager to manage process groups for dp, tp and pp
         2. serve as a store for shard config
         """
+        self.coordinator = DistCoordinator()
         self.shard_config = shard_config
-        self.pg_manager = None
 
-    def init_distributed(self) -> colossalai.cluster.ProcessGroupManager:
-        """
-        Initialize the distributed process group according to the
-        """
-        pg_manager = ...
-        self.pg_manager = pg_manager
-        return pg_manager
 
     def shard_model(self, model: torch.nn.Module，policy: Policy) -> torch.nn.Module:
         """
         Shard model for TP and PP
-        """
-        ...
-
-    def shard_dataset(self, dataset: Dataset) -> Dataloader:
-        """
-        Shard dataset for DP
         """
         ...
 ```
